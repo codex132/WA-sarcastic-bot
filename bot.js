@@ -131,28 +131,44 @@ client.on('disconnected', reason => {
 });
 
 client.on('message', async msg => {
-  if (msg.fromMe)                        return;
-  if (msg.from === 'status@broadcast')   return;
-  if (msg.type !== 'chat')               return;
-  if (!msg.body?.trim())                 return;
-
-  const isGroup = msg.from.includes('@g.us');
-  if (isGroup && process.env.REPLY_GROUPS !== 'true') return;
-
-  const now      = Date.now();
-  const lastSeen = cooldowns.get(msg.from) || 0;
-  if (now - lastSeen < COOLDOWN) return;
-  cooldowns.set(msg.from, now);
-
   try {
-    const chat = await msg.getChat();
-    await chat.sendSeen();
-    await randomDelay();
-    await chat.sendStateTyping();
+    if (!msg) return;
+    if (msg.fromMe) return;
+    if (msg.from === 'status@broadcast') return;
+    if (!msg.body || msg.body.trim() === '') return;
+
+    // only handle regular text messages
+    if (msg.type !== 'chat') return;
+
+    const isGroup = msg.from.includes('@g.us');
+    if (isGroup && process.env.REPLY_GROUPS !== 'true') return;
+
+    const now      = Date.now();
+    const lastSeen = cooldowns.get(msg.from) || 0;
+    if (now - lastSeen < COOLDOWN) return;
+    cooldowns.set(msg.from, now);
+
+    // get chat safely
+    let chat;
+    try { chat = await msg.getChat(); } catch (_) { }
+
+    if (chat) {
+      try { await chat.sendSeen(); } catch (_) { }
+      await randomDelay();
+      try { await chat.sendStateTyping(); } catch (_) { }
+    } else {
+      await randomDelay();
+    }
+
     const reply = await getReply(msg.body.trim());
-    await chat.clearState();
+
+    if (chat) {
+      try { await chat.clearState(); } catch (_) { }
+    }
+
     await msg.reply(reply);
-    console.log(`[${new Date().toLocaleTimeString()}] ${msg.from} → ${reply}`);
+    console.log(`[${new Date().toLocaleTimeString()}] replied: ${reply}`);
+
   } catch (err) {
     console.error('Message handler error:', err.message);
   }
