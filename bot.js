@@ -1,26 +1,21 @@
 require('dotenv').config();
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const Groq = require('groq-sdk');
+const readline = require('readline');
 
-// ─── Validate env ────────────────────────────────────────────────────────────
-const PHONE   = process.env.PHONE_NUMBER;
 const GROQ_KEY = process.env.GROQ_API_KEY;
 const GEM_KEY  = process.env.GEMINI_API_KEY;
 
-if (!PHONE)    { console.error('❌  PHONE_NUMBER missing in .env'); process.exit(1); }
 if (!GROQ_KEY) { console.error('❌  GROQ_API_KEY missing in .env'); process.exit(1); }
 
 const groq = new Groq({ apiKey: GROQ_KEY });
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
 const sleep       = ms => new Promise(r => setTimeout(r, ms));
-const randomDelay = ()  => sleep(1800 + Math.random() * 2800); // 1.8 – 4.6 s
+const randomDelay = ()  => sleep(1800 + Math.random() * 2800);
 
-// per-user rate limit
 const cooldowns = new Map();
 const COOLDOWN  = parseInt(process.env.COOLDOWN_MS || '4000', 10);
 
-// ─── Personality ─────────────────────────────────────────────────────────────
 const SYSTEM_PROMPT = `
 You are a sarcastic, dry-humored WhatsApp bot with zero patience for boring messages.
 You roast every single message you receive — but it stays fun, never genuinely cruel.
@@ -38,7 +33,6 @@ Rules:
 - If a message is in another language, roast them in that same language.
 `.trim();
 
-// offline fallbacks so the bot never goes silent
 const FALLBACKS = [
   "My brain buffered. Unlike your Wi-Fi, it came back.",
   "Error 404: I briefly cared. It passed.",
@@ -47,7 +41,6 @@ const FALLBACKS = [
 ];
 const fallback = () => FALLBACKS[Math.floor(Math.random() * FALLBACKS.length)];
 
-// ─── AI layer ─────────────────────────────────────────────────────────────────
 async function askGroq(text) {
   const res = await groq.chat.completions.create({
     model      : 'llama3-70b-8192',
@@ -87,6 +80,17 @@ async function getReply(text) {
   }
 }
 
+// ─── Ask phone number in console ─────────────────────────────────────────────
+function askPhone() {
+  return new Promise(resolve => {
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    rl.question('📱  Enter your WhatsApp number (international format, digits only): ', answer => {
+      rl.close();
+      resolve(answer.trim().replace(/\D/g, ''));
+    });
+  });
+}
+
 // ─── WhatsApp client ──────────────────────────────────────────────────────────
 const client = new Client({
   authStrategy: new LocalAuth({ clientId: 'sarcastic-bot' }),
@@ -103,26 +107,22 @@ const client = new Client({
       '--single-process',
     ],
   },
-  // keeps WA web version fresh — avoids version-blocked errors
   webVersionCache: {
     type      : 'remote',
     remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.3000.1015901307-alpha3.html',
   },
 });
 
-// ─── Pairing code (no QR scan) ────────────────────────────────────────────────
 client.on('qr', async () => {
+  const phone = await askPhone();
   try {
-    // phone must be digits only, international format — e.g. 2348012345678
-    const code = await client.requestPairingCode(PHONE.replace(/\D/g, ''));
+    const code = await client.requestPairingCode(phone);
     console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     console.log(`  Pairing code: ${code}`);
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    console.log('WhatsApp → ⋮ menu → Linked Devices → Link with phone number');
-    console.log('Enter the code above. You have ~60 seconds.\n');
+    console.log('WhatsApp → ⋮ → Linked Devices → Link with phone number\n');
   } catch (err) {
-    console.error('❌  Could not get pairing code:', err.message);
-    console.error('    Make sure PHONE_NUMBER is in full international format (no + or spaces)');
+    console.error('❌  Pairing code failed:', err.message);
   }
 });
 
@@ -132,27 +132,23 @@ client.on('ready', () => {
 
 client.on('auth_failure', msg => {
   console.error('❌  Auth failure:', msg);
-  console.error('    Delete the .wwebjs_auth folder and restart.');
+  console.error('    Delete .wwebjs_auth and restart.');
 });
 
 client.on('disconnected', reason => {
-  console.warn('⚠️   Disconnected:', reason, '— restarting in 10 s');
+  console.warn('⚠️   Disconnected:', reason, '— restarting in 10s');
   setTimeout(() => client.initialize(), 10_000);
 });
 
-// ─── Message handler ──────────────────────────────────────────────────────────
 client.on('message', async msg => {
-  // ── anti-ban filters ──
-  if (msg.fromMe)                        return; // never reply to self
-  if (msg.from === 'status@broadcast')   return; // skip status updates
-  if (msg.type !== 'chat')               return; // text only
-  if (!msg.body?.trim())                 return; // skip empty
+  if (msg.fromMe)                        return;
+  if (msg.from === 'status@broadcast')   return;
+  if (msg.type !== 'chat')               return;
+  if (!msg.body?.trim())                 return;
 
-  // skip groups unless opted in
   const isGroup = msg.from.includes('@g.us');
   if (isGroup && process.env.REPLY_GROUPS !== 'true') return;
 
-  // per-user cooldown
   const now      = Date.now();
   const lastSeen = cooldowns.get(msg.from) || 0;
   if (now - lastSeen < COOLDOWN) return;
@@ -160,26 +156,18 @@ client.on('message', async msg => {
 
   try {
     const chat = await msg.getChat();
-
-    // ── anti-ban: mark read, humanized delay, typing indicator ──
     await chat.sendSeen();
     await randomDelay();
     await chat.sendStateTyping();
-
     const reply = await getReply(msg.body.trim());
-
     await chat.clearState();
     await msg.reply(reply);
-
     console.log(`[${new Date().toLocaleTimeString()}] ${msg.from} → ${reply}`);
-
   } catch (err) {
     console.error('Message handler error:', err.message);
   }
 });
 
 // ─── Boot ────────────────────────────────────────────────────────────────────
-console.log('🚀  Starting sarcastic bot...');
-console.log(`    Phone  : ${PHONE}`);
-console.log(`    Groups : ${process.env.REPLY_GROUPS === 'true' ? 'yes' : 'no'}\n`);
+console.log('🚀  Starting sarcastic bot...\n');
 client.initialize();
