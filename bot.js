@@ -42,7 +42,7 @@ const fallback = () => FALLBACKS[Math.floor(Math.random() * FALLBACKS.length)];
 
 async function askGroq(text) {
   const res = await groq.chat.completions.create({
-    model      : 'llama3-70b-8192',
+    model      : 'openai/gpt-oss-120b',
     messages   : [
       { role: 'system', content: SYSTEM_PROMPT },
       { role: 'user',   content: text }
@@ -58,7 +58,7 @@ async function askGemini(text) {
   const { GoogleGenerativeAI } = require('@google/generative-ai');
   const genAI = new GoogleGenerativeAI(GEM_KEY);
   const model = genAI.getGenerativeModel({
-    model            : 'gemini-2.0-flash',
+    model            : 'gemini-3-flash-preview',
     systemInstruction: SYSTEM_PROMPT,
   });
   const result = await model.generateContent(text);
