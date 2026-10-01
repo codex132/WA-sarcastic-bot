@@ -1,12 +1,11 @@
 require('dotenv').config();
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const Groq = require('groq-sdk');
-const readline = require('readline');
 
 const GROQ_KEY = process.env.GROQ_API_KEY;
 const GEM_KEY  = process.env.GEMINI_API_KEY;
 
-if (!GROQ_KEY) { console.error('❌  GROQ_API_KEY missing in .env'); process.exit(1); }
+if (!GROQ_KEY) { console.error('❌  GROQ_API_KEY missing in Variables'); process.exit(1); }
 
 const groq = new Groq({ apiKey: GROQ_KEY });
 
@@ -17,11 +16,6 @@ const cooldowns = new Map();
 const COOLDOWN  = parseInt(process.env.COOLDOWN_MS || '4000', 10);
 
 const SYSTEM_PROMPT = `
-You are a sarcastic, dry-humored WhatsApp bot with zero patience for boring messages.
-You roast every single message you receive — but it stays fun, never genuinely cruel.
-Think: that one friend who can't resist being a smartass, but you secretly love them.
-
-Rules:
 You are a sarcastic, dry-humored WhatsApp bot with zero patience for boring messages.
 You roast every single message you receive — but it stays fun, never genuinely cruel.
 Think: that one friend who can't resist being a smartass, but you secretly love them.
@@ -85,18 +79,6 @@ async function getReply(text) {
   }
 }
 
-// ─── Ask phone number in console ─────────────────────────────────────────────
-function askPhone() {
-  return new Promise(resolve => {
-    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-    rl.question('📱  Enter your WhatsApp number (international format, digits only): ', answer => {
-      rl.close();
-      resolve(answer.trim().replace(/\D/g, ''));
-    });
-  });
-}
-
-// ─── WhatsApp client ──────────────────────────────────────────────────────────
 const client = new Client({
   authStrategy: new LocalAuth({ clientId: 'sarcastic-bot' }),
   puppeteer: {
@@ -119,13 +101,16 @@ const client = new Client({
 });
 
 client.on('qr', async () => {
-  const phone = await askPhone();
+  const phone = (process.env.PHONE_NUMBER || '').replace(/\D/g, '');
+  if (!phone) {
+    console.error('❌  PHONE_NUMBER missing in Railway Variables');
+    return;
+  }
   try {
     const code = await client.requestPairingCode(phone);
     console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     console.log(`  Pairing code: ${code}`);
-    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    console.log('WhatsApp → ⋮ → Linked Devices → Link with phone number\n');
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
   } catch (err) {
     console.error('❌  Pairing code failed:', err.message);
   }
@@ -173,6 +158,5 @@ client.on('message', async msg => {
   }
 });
 
-// ─── Boot ────────────────────────────────────────────────────────────────────
 console.log('🚀  Starting sarcastic bot...\n');
 client.initialize();
